@@ -6,6 +6,7 @@ from cassandra.cluster import Cluster
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col
+from pyspark.sql.types import StructType, StructField, StringType
 
 
 def create_keyspace(session):
@@ -31,7 +32,7 @@ def create_table(session):
             DOB TEXT
             Registered_Date TEXT,
             Phone TEXT,
-            Picture TEXT)
+            Picture TEXT);
     """)
 
     print("Table created successfully!")
@@ -70,10 +71,11 @@ def insert_data(session, **kwargs):
 def create_spark_connection():
     s_conn = None
 
+    # You have to download and upload the jar file of spark-cassandra-connector and spark-sql-connector in pyspark lib.
     try:
         s_conn = SparkSession.builder \
             .appName('SparkDataStreaming') \
-                .config('spark.jars.packages', 'com.datastax.spark:spark-cassandra-connector_2.13:3.14,'
+                .config('spark.jars.packages', 'com.datastax.spark:spark-cassandra-connector_2.13:3.1.4,'
                                                 'org.apache.spark:spark-sql-kafka-0-10_2.13:3.4.1') \
                 .config('spark.cassandra.connection.host', 'localhost') \
                 .getOrCreate()
@@ -104,7 +106,6 @@ def connect_kafka(spark_conn):
 
 
 def create_cassandra_connection():
-    session = None
     try:
         cluster = Cluster(['localhost'])
         cass_session = cluster.connect()
@@ -112,17 +113,47 @@ def create_cassandra_connection():
     except Exception as e:
         logging.error(f"Could not create cassandra connection due to {e}")
         return None
+    
 
+def create_selection_df_from_kafka(spark_df):
+    schema = StructType([
+        StructField("id", StringType()),
+        StructField("First_Name", StringType()),
+        StructField("Last_Name", StringType()),
+        StructField("Gender", StringType()),
+        StructField("Address", StringType()),
+        StructField("Postcode", StringType()),
+        StructField("Email", StringType()),
+        StructField("Username", StringType()),
+        StructField("DOB", StringType()),
+        StructField("Registered_Date", StringType()),
+        StructField("Phone", StringType()),
+        StructField("Picture", StringType())
+    ])
+
+    sel = spark_df.selectExpr("CAST(value AS STRING)").select(from_json(col('value'), schema).alias('data')).select('data.*')
+    print(sel)
+
+    return sel
 
 if __name__ == '__main__':
     spark_conn = create_spark_connection()
 
     if spark_conn is not None:
+        spark_df = connect_kafka(spark_conn)
+        selection_df = create_selection_df_from_kafka(spark_df)
         session = create_cassandra_connection
 
         if session is not None:
             create_keyspace(session)
             create_table(session)
-            insert_data(session)
+            # insert_data(session)
+
+            streaming_query = (selection_df.writeStream.format("org.apache.spark.sql.cassandra")
+                               .option('checkpointLocation', '/tmp/checkpoint')
+                               .option('keyspace', 'spark_streams')
+                               .option('table', 'created_users')
+                               .start())
+            streaming_query.awaitTermination()
 
 

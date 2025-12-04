@@ -44,7 +44,7 @@ def format_data(res):
 
 def stream_data():
     producer = KafkaProducer(bootstrap_servers=['broker:29092'], max_block_ms = 5000)
-    curr = time.time()
+    curr_time = time.time()
 
     while True:
         if time.time() > curr_time + 60:
